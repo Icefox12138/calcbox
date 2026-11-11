@@ -1,31 +1,29 @@
-"""Audit-only sandbox.
+"""Audit-only sandbox for the compute worker.
 
-This is **not** an OS-level jail. It is a set of sys.audit hooks that refuse a
-short, explicit list of dangerous operations inside the worker process. It
-raises the cost of an accidental shell-out; it does not stop a determined
-attacker, and it is not a substitute for a container or a restricted user.
+Blocks, at the Python level: network sockets, process creation, and any
+filesystem write outside the per-run temp directory. There is no namespace, no
+seccomp, no read-only mount — a determined expression can still consume CPU or
+memory. Reported as sandbox="audit-only" so nobody mistakes it for isolation.
 
-Reported to callers as sandbox="audit-only" so nobody mistakes it for isolation.
+Ported from socratic-tutor's sandbox_policy.py; the only change is the
+environment variable name (CALCBOX_SANDBOX_TEMP).
 """
 import os
 import sys
 
-DENIED_PREFIXES = (
-    "os.system",
-    "os.exec",
-    "os.posix_spawn",
-    "os.spawn",
-    "subprocess.Popen",
-    "socket.connect",
-    "socket.bind",
-    "ctypes.dlopen",
-)
-
 TEMP_ENV = "CALCBOX_SANDBOX_TEMP"
 
+_NETWORK = ("socket.__new__", "socket.connect", "socket.bind",
+            "socket.getaddrinfo", "socket.gethostbyname", "socket.sendto")
+_PROCESS = ("subprocess.Popen", "os.system", "os.exec", "os.spawn",
+            "os.posix_spawn", "os.fork")
+_WRITE_EVENTS = ("os.remove", "os.unlink", "os.mkdir", "os.rmdir", "os.chmod",
+                 "os.utime", "os.truncate")
+_RENAME_EVENTS = ("os.rename", "os.replace")
 
-class PolicyViolation(RuntimeError):
-    """Raised from an audit hook when the policy denies an operation."""
+
+class PolicyViolation(PermissionError):
+    """Raised from the audit hook when the policy denies an operation."""
 
 
 def status():
@@ -36,17 +34,45 @@ def status():
             "note": "audit hooks are advisory; run real workloads in a container"}
 
 
-def _hook(event, args):
-    for prefix in DENIED_PREFIXES:
-        if event == prefix or event.startswith(prefix):
-            raise PolicyViolation("calcbox audit policy denied %s" % event)
+def install(temp):
+    temp = os.path.realpath(temp or "")
+    if not temp:
+        raise RuntimeError("sandbox temp is required")
 
+    def inside(path):
+        if path is None or isinstance(path, int):
+            return False
+        try:
+            p = os.path.realpath(str(path))
+        except Exception:
+            return False
+        return p == temp or p.startswith(temp + os.sep)
 
-def install(temp_dir=None):
-    """Install the audit hook; optionally constrain the working directory."""
-    if temp_dir:
-        os.makedirs(temp_dir, exist_ok=True)
-        os.chdir(temp_dir)
-        os.environ[TEMP_ENV] = temp_dir
-    sys.addaudithook(_hook)
+    def hook(event, args):
+        if event in _NETWORK:
+            raise PermissionError("network disabled by compute sandbox")
+        if event in _PROCESS:
+            raise PermissionError("process creation disabled by compute sandbox")
+        if event == "open":
+            path = args[0] if args else None
+            mode = args[1] if len(args) > 1 else "r"
+            flags = args[2] if len(args) > 2 else 0
+            writing = False
+            if isinstance(mode, str):
+                writing = any(c in mode for c in "wax+")
+            elif isinstance(flags, int):
+                writing = bool(flags & (os.O_WRONLY | os.O_RDWR |
+                                        os.O_CREAT | os.O_APPEND))
+            if writing and not inside(path):
+                raise PermissionError("read-only filesystem: %s" % (path,))
+        if event in _WRITE_EVENTS:
+            path = args[0] if args else None
+            if path is not None and not inside(path):
+                raise PermissionError("read-only filesystem: %s" % (path,))
+        if event in _RENAME_EVENTS:
+            for path in args[:2]:
+                if path is not None and not inside(path):
+                    raise PermissionError("read-only filesystem: %s" % (path,))
+
+    sys.addaudithook(hook)
     return status()

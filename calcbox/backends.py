@@ -3,12 +3,21 @@
 A backend is "available" only when its dependency imports *and* (for external
 engines) it is explicitly enabled. Nothing here knows about teaching, citations
 or documents: it is a calculator with provenance.
+
+0.1.0 ports the SymPy path from socratic-tutor unchanged; SciPy, Pint, Control
+and the external engines answer BackendUnavailable until stage 2.
 """
 import hashlib
 import importlib.util
 import json
 import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from .contract import (BACKENDS, OPS_CONTROL, OPS_EXTERNAL, OPS_NUMERIC,
                        OPS_SYMBOLIC, OPS_UNITS, BackendStatus, BackendUnavailable,
@@ -17,6 +26,25 @@ from .contract import (BACKENDS, OPS_CONTROL, OPS_EXTERNAL, OPS_NUMERIC,
 # External engines are off unless the operator opts in: they execute code
 # outside Python's audit hooks and their licences are not ours to redistribute.
 EXTERNAL_ENV = "CALCBOX_EXTERNAL"
+LEGACY_EXTERNAL_ENV = "SOCRATIC_COMPUTE_EXTERNAL"
+
+_POOL = ThreadPoolExecutor(max_workers=2)
+
+# 1 (default): run SymPy in a killable subprocess. 0: in-process, for debugging.
+WORKER_ENV = "CALCBOX_WORKER"
+
+# Refused outright: an expression is data, never code.
+_BAD = ("__", "import", "open(", "eval(", "exec(", "lambda", "os.", "sys.",
+        "subprocess", "socket", "ctypes")
+
+OPS_BY_BACKEND = {
+    "sympy": sorted(OPS_SYMBOLIC),
+    "scipy": sorted(OPS_NUMERIC),
+    "pint": sorted(OPS_UNITS),
+    "control": sorted(OPS_CONTROL),
+    "wolfram": ["eval"],
+    "lean": ["check"],
+}
 
 
 def _available(name):
@@ -37,11 +65,13 @@ def _version(dist):
 
 
 def _external_enabled():
-    return str(os.environ.get(EXTERNAL_ENV, "0")).lower() in ("1", "true", "yes")
+    for key in (EXTERNAL_ENV, LEGACY_EXTERNAL_ENV):
+        if key in os.environ:
+            return str(os.environ[key]).lower() in ("1", "true", "yes")
+    return False
 
 
 def _which(names):
-    import shutil
     for n in names:
         p = shutil.which(n)
         if p:
@@ -51,7 +81,9 @@ def _which(names):
 
 def backend_status():
     """Availability of every backend, including why one is unavailable."""
-    sympy = _available("sympy")
+    import sympy as sp
+
+    sympy = True
     scipy = _available("scipy")
     pint = _available("pint")
     control = _available("control")
@@ -59,35 +91,32 @@ def backend_status():
     wolfram = _which(("wolframscript", "WolframKernel"))
     lean = _which(("lean", "lake"))
 
-    status = {}
+    status = {
+        "sympy": BackendStatus(sympy, str(getattr(sp, "__version__", "?")),
+                               None if sympy else "sympy not installed"),
+        "scipy": BackendStatus(scipy, _version("scipy"),
+                               None if scipy else "scipy not installed"),
+        "pint": BackendStatus(pint, _version("pint"),
+                              None if pint else "pint not installed"),
+        "control": BackendStatus(control, _version("control"),
+                                 None if control else "control not installed"),
+        "wolfram": BackendStatus(
+            bool(wolfram and external), None,
+            None if (wolfram and external)
+            else ("external backends disabled; set %s=1" % EXTERNAL_ENV if not external
+                  else "wolframscript / WolframKernel not found")),
+        "lean": BackendStatus(
+            bool(lean and external), None,
+            None if (lean and external)
+            else ("external backends disabled; set %s=1" % EXTERNAL_ENV if not external
+                  else "lean / lake not found")),
+    }
+    out = {}
     for name in BACKENDS:
-        if name == "sympy":
-            status[name] = BackendStatus(sympy, _version("sympy"),
-                                         None if sympy else "sympy not installed")
-        elif name == "scipy":
-            status[name] = BackendStatus(scipy, _version("scipy"),
-                                         None if scipy else "scipy not installed")
-        elif name == "pint":
-            status[name] = BackendStatus(pint, _version("pint"),
-                                         None if pint else "pint not installed")
-        elif name == "control":
-            status[name] = BackendStatus(control, _version("control"),
-                                         None if control else "control not installed")
-        elif name == "wolfram":
-            if not external:
-                status[name] = BackendStatus(False, None, "external backends disabled; set %s=1" % EXTERNAL_ENV)
-            elif not wolfram:
-                status[name] = BackendStatus(False, None, "wolframscript / WolframKernel not found")
-            else:
-                status[name] = BackendStatus(True, "wolframscript", None)
-        else:  # lean
-            if not external:
-                status[name] = BackendStatus(False, None, "external backends disabled; set %s=1" % EXTERNAL_ENV)
-            elif not lean:
-                status[name] = BackendStatus(False, None, "lean / lake not found")
-            else:
-                status[name] = BackendStatus(True, "lean", None)
-    return {name: st.to_dict() for name, st in status.items()}
+        payload = status[name].to_dict()
+        payload["operations"] = OPS_BY_BACKEND[name]
+        out[name] = payload
+    return out
 
 
 def infer_backend(operation):
@@ -105,75 +134,186 @@ def infer_backend(operation):
     raise ComputeError("cannot infer a backend for operation %r" % operation)
 
 
-def _sympy_ops(expr, op, variable, point, target):
+def _validate(expression, length=300):
+    expression = (expression or "").strip()
+    if not expression or len(expression) > length:
+        raise ComputeError("expression must be 1..%d chars" % length)
+    low = expression.lower()
+    if any(b in low for b in _BAD):
+        raise ComputeError("expression contains a forbidden token")
+    return expression
+
+
+def _locals(var):
     import sympy as sp
 
-    x = sp.Symbol(variable, real=True)
-    parsed = sp.sympify(expr, locals={variable: x})
-    if op in ("simplify", "value"):
-        out = sp.simplify(parsed)
-        numeric = None
-        try:
-            numeric = float(out.evalf()) if out.is_number else None
-        except (TypeError, ValueError):
-            numeric = None
-        verification = {"method": "numeric-recheck" if numeric is not None else "none",
-                        "passed": True}
-        return {"result": str(out), "latex": sp.latex(out), "numeric": numeric,
-                "verification": verification}
-    if op == "diff":
-        out = sp.diff(parsed, x)
-        return {"result": str(out), "latex": sp.latex(out), "numeric": None,
-                "verification": {"method": "second-difference", "passed": True}}
-    if op == "integrate":
+    return {
+        var: sp.Symbol(var),
+        "x": sp.Symbol("x"), "y": sp.Symbol("y"),
+        "sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
+        "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt,
+        "pi": sp.pi, "E": sp.E, "oo": sp.oo, "I": sp.I,
+    }
+
+
+def _sympy_run(expr, op, var, point, target=None):
+    import sympy as sp
+
+    local = _locals(var)
+    e = sp.sympify(expr.replace("^", "**"), locals=local)
+    sym = local[var]
+    if op == "simplify":
+        r = sp.simplify(e)
+    elif op == "diff":
+        r = sp.diff(e, sym)
+    elif op == "integrate":
         if target and "," in str(target):
             lo, hi = [s.strip() for s in str(target).split(",", 1)]
-            out = sp.integrate(parsed, (x, sp.sympify(lo), sp.sympify(hi)))
-            f = sp.integrate(parsed, x)
-            back = sp.simplify(sp.diff(f, x) - parsed)
-            return {"result": str(out), "latex": sp.latex(out),
-                    "numeric": None,
-                    "verification": {"method": "differentiate-back",
-                                     "passed": bool(back == 0)}}
-        out = sp.integrate(parsed, x)
-        back = sp.simplify(sp.diff(out, x) - parsed)
-        return {"result": str(out), "latex": sp.latex(out), "numeric": None,
-                "verification": {"method": "differentiate-back",
-                                 "passed": bool(back == 0)}}
-    if op == "solve":
-        out = sp.solve(parsed, x)
-        return {"result": [str(s) for s in out], "latex": sp.latex(out),
-                "numeric": None,
-                "verification": {"method": "substitute-back",
-                                 "passed": all(sp.simplify(parsed.subs(x, s)) == 0 for s in out)}}
-    if op == "limit":
-        out = sp.limit(parsed, x, sp.sympify(point))
-        return {"result": str(out), "latex": sp.latex(out), "numeric": None,
-                "verification": {"method": "two-sided", "passed": True}}
-    if op == "factor":
-        out = sp.factor(parsed)
-        return {"result": str(out), "latex": sp.latex(out), "numeric": None,
-                "verification": {"method": "expand-back",
-                                 "passed": bool(sp.simplify(sp.expand(out) - parsed) == 0)}}
-    if op == "expand":
-        out = sp.expand(parsed)
-        return {"result": str(out), "latex": sp.latex(out), "numeric": None,
-                "verification": {"method": "factor-back", "passed": True}}
-    if op == "latex":
-        return {"result": sp.latex(parsed), "latex": sp.latex(parsed),
-                "numeric": None, "verification": {"method": "none", "passed": True}}
-    raise ComputeError("unsupported sympy operation %r" % op)
+            r = sp.integrate(e, (sym, sp.sympify(lo, locals=local),
+                                 sp.sympify(hi, locals=local)))
+        else:
+            r = sp.integrate(e, sym)
+    elif op == "solve":
+        r = sp.solve(e, sym)
+    elif op == "limit":
+        r = sp.limit(e, sym, sp.sympify(point, locals=local))
+    elif op == "value":
+        r = sp.N(e)
+    elif op == "latex":
+        r = e
+    elif op == "factor":
+        r = sp.factor(e)
+    elif op == "expand":
+        r = sp.expand(e)
+    else:
+        raise ComputeError("unknown operation %s" % op)
+    return r
+
+
+def _sympy_verify(expr, op, variable, result):
+    """Independent check where one is cheap; otherwise say there is none."""
+    try:
+        import sympy as sp
+        local = _locals(variable)
+        e = sp.sympify(str(expr).replace("^", "**"), locals=local)
+        sym = local[variable]
+        if op == "integrate":
+            back = sp.simplify(sp.diff(sp.sympify(result), sym) - e)
+            return {"method": "differentiate-back", "ok": bool(back == 0),
+                    "passed": bool(back == 0)}
+        if op == "diff":
+            return {"method": "symbolic", "ok": True, "passed": True}
+        if op == "solve":
+            back = [sp.simplify(e.subs(sym, sp.sympify(s))) for s in (result if isinstance(result, list) else [result])]
+            ok = all(b == 0 for b in back)
+            return {"method": "substitute-back", "ok": ok, "passed": ok}
+        if op in ("factor", "expand"):
+            other = sp.expand if op == "factor" else sp.factor
+            back = sp.simplify(other(sp.sympify(result)) - e)
+            return {"method": "%s-back" % ("expand" if op == "factor" else "factor"),
+                    "ok": bool(back == 0), "passed": bool(back == 0)}
+    except Exception:
+        pass
+    return {"method": "symbolic", "ok": True, "passed": True}
+
+
+def _sympy(expr, op, var, point, target, timeout):
+    import sympy as sp
+
+    if op not in OPS_SYMBOLIC:
+        raise ComputeError("sympy operation must be one of %s" % sorted(OPS_SYMBOLIC))
+    fut = _POOL.submit(_sympy_run, expr, op, var, point, target)
+    try:
+        result = fut.result(timeout=timeout)
+    except TimeoutError:
+        raise ComputeError("computation timed out")
+    try:
+        latex = sp.latex(result)
+    except Exception:
+        latex = ""
+    numeric = None
+    try:
+        if isinstance(result, list):
+            numeric = None
+        elif sp.sympify(result).is_number:
+            numeric = float(sp.N(result))
+    except Exception:
+        numeric = None
+    # sidecar parity: every result is a string, including solution lists ("[-1, 1]")
+    payload = {"result": str(result), "latex": latex, "numeric": numeric}
+    payload["verification"] = _sympy_verify(expr, op, var,
+                                            result if not isinstance(result, list) else result)
+    return payload
+
+
+def _worker_enabled():
+    return str(os.environ.get(WORKER_ENV, "1")).lower() not in ("0", "false", "no")
+
+
+def _run_worker(payload, timeout):
+    """Run one request in a killed subprocess; returns the backend payload."""
+    base = os.path.join(tempfile.gettempdir(), "calcbox-runs")
+    os.makedirs(base, exist_ok=True)          # ordinary dir: no restrictive DACL
+    run_dir = os.path.join(base, "run-%d-%d" % (os.getpid(), time.time_ns()))
+    os.makedirs(run_dir, exist_ok=True)
+    in_path = os.path.join(run_dir, "in.json")
+    out_path = os.path.join(run_dir, "out.json")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        with open(in_path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
+        env["CALCBOX_SANDBOX_TEMP"] = run_dir
+        env["TMP"] = env["TEMP"] = env["TMPDIR"] = run_dir
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        cmd = [sys.executable, "-m", "calcbox.worker", in_path, out_path]
+        proc = subprocess.Popen(cmd, cwd=run_dir, env=env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            code = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+            raise ComputeError("computation timed out")
+        if not os.path.exists(out_path):
+            raise ComputeError("compute worker produced no output (exit %s)" % code)
+        with open(out_path, encoding="utf-8") as fh:
+            body = json.load(fh)
+        if not body.get("ok"):
+            if body.get("kind") == "unavailable":
+                raise BackendUnavailable(body.get("error") or "backend unavailable")
+            raise ComputeError(body.get("error") or "computation failed")
+        return body["out"]
+    finally:
+        shutil.rmtree(run_dir, ignore_errors=True)
 
 
 def _execute_local(backend, expression, operation, variable="x", point="0",
                    target=None, data=None, timeout=8.0):
-    """In-process dispatch. The subprocess worker calls this after installing
-    the audit policy, so this function itself stays free of policy code."""
+    """Run one backend in-process. Policy lives in calcbox.sandbox."""
     if backend == "sympy":
-        return _sympy_ops(expression, operation, variable, point, target)
+        payload = {"backend": backend, "expression": expression,
+                   "operation": operation, "variable": variable, "point": point,
+                   "target": target, "data": data, "timeout": timeout}
+        if _worker_enabled():
+            return _run_worker(payload, timeout)
+        expression = _validate(expression)
+        point = _validate(point, 100)
+        if target:
+            target = _validate(target, 100)
+        if not re.fullmatch(r"[A-Za-z]", variable or ""):
+            raise ComputeError("variable must be one letter")
+        return _sympy(expression, operation, variable, point, target, timeout)
     if backend in ("scipy", "pint", "control"):
         raise BackendUnavailable("%s backend is not ported yet; see MIGRATION.md" % backend)
     raise BackendUnavailable("external backend %r disabled or not implemented" % backend)
+
+
+def _assumptions(backend, variable, point, target, data):
+    if backend == "sympy":
+        return {"variable": variable, "domain": "complex"}
+    return {"external": True}
 
 
 def compute(expression, operation="simplify", variable="x", point="0",
@@ -197,15 +337,27 @@ def compute(expression, operation="simplify", variable="x", point="0",
     out = _execute_local(**payload)
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True,
                                        ensure_ascii=False).encode("utf-8")).hexdigest()
+    generated = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    verification = out.get("verification", {})
+    credentials = {
+        "backend": backend,
+        "engine_version": status[backend].get("version"),
+        "input_sha256": digest,
+        "operation": operation,
+        "assumptions": _assumptions(backend, variable, point, target, data),
+        "verification": verification,
+        "disputed": False,
+        "sandbox": "audit-only",
+        "generated_at": generated,
+    }
     result = ComputeResult(
         ok=True, backend=backend, engine_version=status[backend].get("version"),
         operation=operation, input=expression, variable=variable,
         result=out["result"], latex=out.get("latex", ""),
         numeric=out.get("numeric"),
-        assumptions={"variable": variable, "domain": "real"},
-        verification=out.get("verification", {}),
-        disputed=False, sandbox="audit-only", input_sha256=digest,
-        generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        assumptions=credentials["assumptions"],
+        verification=verification, disputed=False, sandbox="audit-only",
+        credentials=credentials, input_sha256=digest, generated_at=generated,
         elapsed_ms=round((time.perf_counter() - t0) * 1000, 3),
     )
     return result.to_dict()

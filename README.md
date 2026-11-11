@@ -115,9 +115,14 @@ or disabled external engine → 503).
 
 ## Status
 
-`0.0.1` — skeleton with a working sympy backend. `scipy`, `pint`, `control` and the
-external engines are declared in `backend_status()` but return `BackendUnavailable`
-until ported; see [MIGRATION.md](MIGRATION.md).
+0.1.0 — **SymPy backend complete**, ported from socratic-tutor unchanged: all nine
+operations, token validation, one-letter variables, and a killable subprocess worker
+so a timeout is a real timeout (~0.2 s overhead per call).
+
+Still returning BackendUnavailable with a reason: scipy, pint, control, wolfram, lean.
+See MIGRATION.md for the stage plan.
+
+Known limit: the worker is spawned per call (simple, isolated) rather than pooled.
 
 ## License
 

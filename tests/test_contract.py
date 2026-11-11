@@ -37,7 +37,7 @@ class TestSymbolic(unittest.TestCase):
         self.assertEqual(out["backend"], "sympy")
         self.assertIn("x**3", out["result"].replace(" ", ""))
         self.assertEqual(out["verification"]["method"], "differentiate-back")
-        self.assertTrue(out["verification"]["passed"])
+        self.assertTrue(out["verification"]["ok"])
 
     def test_derivative(self):
         out = compute("x**3", "diff")

@@ -11,6 +11,6 @@ from .backends import backend_status, compute
 from .contract import (BackendStatus, BackendUnavailable, ComputeError,
                        ComputeRequest, ComputeResult)
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 __all__ = ["compute", "backend_status", "ComputeError", "BackendUnavailable",
            "ComputeRequest", "ComputeResult", "BackendStatus", "__version__"]

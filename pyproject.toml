@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "calcbox"
+version = "0.1.0"
+description = "Backend-agnostic math compute kernel: symbolic, numeric, units, control — with provenance in every answer"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "calcbox contributors" }]
+keywords = ["math", "sympy", "scipy", "units", "mcp", "compute"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Scientific/Engineering :: Mathematics",
+]
+license = { text = "MIT" }
+
+# Nothing is required: every backend is optional and reported as unavailable.
+dependencies = []
+
+[project.optional-dependencies]
+symbolic = ["sympy>=1.12"]
+numeric = ["scipy>=1.11", "numpy"]
+units = ["pint>=0.23"]
+control = ["control>=0.9", "numpy"]
+api = ["fastapi>=0.110", "pydantic>=2"]
+mcp = ["mcp>=1.0"]
+full = ["sympy>=1.12", "scipy>=1.11", "numpy", "pint>=0.23", "control>=0.9"]
+
+[project.urls]
+Repository = "https://github.com/Icefox12138/calcbox"
+
+[project.scripts]
+calcbox = "calcbox.cli:main"
+calcbox-mcp = "calcbox.mcp_server:main"
+
+[tool.setuptools]
+packages = ["calcbox"]

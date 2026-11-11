@@ -18,6 +18,7 @@ Successful result:
       "verification": {"method": "differentiate-back", "passed": true},
       "disputed": false,
       "sandbox": "audit-only",
+      "credentials": {"backend": "sympy", "verification": {...}, "sandbox": "audit-only"},
       "input_sha256": "…",
       "generated_at": "2026-11-11T09:00:00Z",
       "elapsed_ms": 12.4
@@ -80,6 +81,7 @@ class ComputeResult:
     verification: Dict[str, Any] = field(default_factory=dict)
     disputed: bool = False
     sandbox: str = "audit-only"
+    credentials: Dict[str, Any] = field(default_factory=dict)
     input_sha256: str = ""
     generated_at: str = ""
     elapsed_ms: float = 0.0
@@ -92,7 +94,8 @@ class ComputeResult:
             "result": self.result, "latex": self.latex,
             "numeric": self.numeric, "assumptions": self.assumptions,
             "verification": self.verification, "disputed": self.disputed,
-            "sandbox": self.sandbox, "input_sha256": self.input_sha256,
+            "sandbox": self.sandbox, "credentials": self.credentials,
+            "input_sha256": self.input_sha256,
             "generated_at": self.generated_at, "elapsed_ms": self.elapsed_ms,
         }
 

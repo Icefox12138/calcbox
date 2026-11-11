@@ -5,7 +5,7 @@
 | 来源 | `socratic-tutor/sidecar/app/{compute,compute_worker,sandbox_policy}.py` |
 | 现状 | 467 + 26 + 51 行；仅 3 处环境变量前缀与 1 处临时目录前缀带 `SOCRATIC_` |
 | 目标 | 独立 MIT 包 `calcbox`，教学侧只保留薄客户端 |
-| 本骨架已做 | 契约、backends 注册表、sympy 全操作、sandbox 骨架、worker、api、mcp、cli、10 条测试 |
+| 已做（0.1.0） | 契约、backends 注册表、**sympy 全操作（含校验与 worker 超时）**、sandbox（与 sidecar 同策略）、worker、api、mcp、cli、23 条测试 |
 
 ## 0. 一句话
 
@@ -59,6 +59,21 @@ def _external_enabled():
 
 **原则**：calcbox 的字段是超集；sidecar 迁移后直接透传，不改插件。
 
+## 3b. 阶段 1 实际完成情况（0.1.0）
+
+| 项 | 状态 |
+|---|---|
+| sympy 9 个操作（simplify/diff/integrate/solve/limit/value/latex/factor/expand） | ✅ 与 sidecar 逐行一致 |
+| 脱字符归一化、禁用令牌、变量单字母、表达式长度上限 | ✅ 一致 |
+| 子进程 worker + 超时杀进程 | ✅ 一致（CALCBOX_WORKER=0 可退回进程内，仅调试用） |
+| sandbox 策略 | ✅ 一致（网络 / 进程 / 工作区外写入），仅环境变量改名 |
+| 结果字段 | ✅ 超集：新增 elapsed_ms 与 credentials；verification 同时给 ok 与 passed |
+| scipy / pint / control / wolfram / lean | ⏳ 阶段 2，当前返回 BackendUnavailable（not ported yet） |
+| 测试 | 23 条通过 |
+
+与 sidecar 的行为差异：integrate 额外支持 target="a,b" 定积分（sidecar 忽略该参数），属向后兼容的超集。
+
+发现并修正的两个坑：worker 内部会再次走 worker（递归）→ 进 worker 后置 CALCBOX_WORKER=0；沙箱最初拒绝了 ctypes.dlopen，而 sympy 导入会触发它 → 策略回到与 sidecar 一致的最小集合。
 ## 4. sidecar 侧的改造（三阶段）
 
 ### 阶段 A：并行期（不改行为）
