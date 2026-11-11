@@ -5,7 +5,7 @@
 | 来源 | `socratic-tutor/sidecar/app/{compute,compute_worker,sandbox_policy}.py` |
 | 现状 | 467 + 26 + 51 行；仅 3 处环境变量前缀与 1 处临时目录前缀带 `SOCRATIC_` |
 | 目标 | 独立 MIT 包 `calcbox`，教学侧只保留薄客户端 |
-| 已做（0.2.0） | 契约、backends 注册表、**sympy + scipy + pint + control 全部迁移**、sandbox 同策略、worker 超时、api、mcp、cli、33 条测试 |
+| 已做（0.3.0） | 契约、backends 注册表、**六个后端全部迁移**（含 wolfram/lean）、sandbox 同策略、worker 超时、api、mcp、cli、36 条测试 |
 
 ## 0. 一句话
 
@@ -70,8 +70,8 @@ def _external_enabled():
 | 结果字段 | ✅ 超集：新增 elapsed_ms 与 credentials；verification 同时给 ok 与 passed |
 | scipy（quad/minimize/root，含 sympy 交叉验证与 disputed） | ✅ 0.2.0 |
 | pint（convert）/ control（step） | ✅ 0.2.0 |
-| wolfram / lean | ⏳ 阶段 3，默认关闭且返回 BackendUnavailable |
-| 测试 | 33 条通过；parity 15/15 |
+| wolfram / lean | ✅ 0.3.0：默认关闭；开启但无二进制时报 not found |
+| 测试 | 36 条通过；parity 15/15 |
 
 与 sidecar 的行为差异：integrate 额外支持 target="a,b" 定积分（sidecar 忽略该参数），属向后兼容的超集。
 
@@ -126,6 +126,20 @@ def backend_status():
 4. MCP 发布（`calcbox-mcp` 入口已有）；
 5. sidecar 依赖 `calcbox>=0.1,<0.2`，进入阶段 A。
 
+## 6b. 阶段 4 完成情况：sidecar 变薄壳
+
+| 项 | 结果 |
+|---|---|
+| sidecar/app/compute.py | 由 540 行实现换成约 45 行适配器（re-export calcbox） |
+| compute_worker.py / sandbox_policy.py | 删除（职责在 calcbox） |
+| 测试 | 341 条通过（原 264 条 + 期间新增的 v2/词法用例） |
+| 契约 | /v1/compute 与 /v1/compute/backends 字段不变；sandbox 标记 audit → audit-only |
+| HTTP 冒烟 | POST /v1/compute 返回 x**3/3 + verification=differentiate-back |
+| contract_check | 9 项全过（含 compute backends、grep、页图） |
+
+顺带修掉两个把「外部只读库」挡在门外的问题：
+1. health 在库不可打开时调 schema 探测会 500 → 已加保护；
+2. SQLite 在 WAL 库上即使只读也要写 -shm，沙箱下必失败 → open_db 依次尝试 正常 / mode=ro / mode=ro&immutable=1。
 ## 7. 风险与对策
 
 | 风险 | 对策 |

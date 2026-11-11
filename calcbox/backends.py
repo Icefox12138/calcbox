@@ -429,6 +429,64 @@ def _control(data, op, timeout):
         raise ComputeError(str(e))
 
 
+
+def _wolfram(expr, op, timeout):
+    if not _external_enabled():
+        raise BackendUnavailable("external backends disabled; set %s=1" % EXTERNAL_ENV)
+    exe = _which(("wolframscript", "WolframKernel"))
+    if not exe:
+        raise BackendUnavailable("Wolfram Engine/wolframscript not found")
+    if op != "eval":
+        raise ComputeError("wolfram operation must be eval")
+    if len(expr) > 2000:
+        raise ComputeError("wolfram expression too long")
+    try:
+        proc = subprocess.run([exe, "-code", expr], capture_output=True,
+                              text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise ComputeError("wolfram computation timed out")
+    except Exception as e:
+        raise ComputeError(str(e))
+    out = (proc.stdout or "").strip()
+    if proc.returncode != 0 and not out:
+        raise ComputeError((proc.stderr or "wolfram failed").strip()[:300])
+    return {"result": out, "latex": "", "numeric": None,
+            "details": {"returncode": proc.returncode}}
+
+
+def _lean(code, op, timeout):
+    if not _external_enabled():
+        raise BackendUnavailable("external backends disabled; set %s=1" % EXTERNAL_ENV)
+    exe = _which(("lean", "lake"))
+    if not exe:
+        raise BackendUnavailable("Lean 4/lake not found")
+    if op != "check":
+        raise ComputeError("lean operation must be check")
+    if len(code) > 5000:
+        raise ComputeError("lean code too long")
+    base = os.environ.get("CALCBOX_SANDBOX_TEMP") or tempfile.gettempdir()
+    os.makedirs(base, exist_ok=True)
+    path = os.path.join(base, "check-%d.lean" % time.time_ns())
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(code)
+        try:
+            proc = subprocess.run([exe, path], capture_output=True, text=True,
+                                  timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise ComputeError("lean check timed out")
+        return {"result": "ok" if proc.returncode == 0 else "failed",
+                "latex": "", "numeric": None,
+                "details": {"returncode": proc.returncode,
+                            "stdout": (proc.stdout or "")[:1000],
+                            "stderr": (proc.stderr or "")[:1000]}}
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def _execute_local(backend, expression, operation, variable="x", point="0",
                    target=None, data=None, timeout=8.0):
     """Run one backend in-process. Policy lives in calcbox.sandbox."""
@@ -458,6 +516,10 @@ def _execute_local(backend, expression, operation, variable="x", point="0",
         return _pint(expression, operation, target, timeout)
     if backend == "control":
         return _control(data, operation, timeout)
+    if backend == "wolfram":
+        return _wolfram(expression, operation, timeout)
+    if backend == "lean":
+        return _lean(expression, operation, timeout)
     raise BackendUnavailable("external backend %r disabled or not implemented" % backend)
 
 
@@ -485,6 +547,8 @@ def compute(expression, operation="simplify", variable="x", point="0",
                          variable=variable, point=point, target=target,
                          data=data, timeout=timeout, backend=backend)
     payload = req.payload()
+    if backend in ("wolfram", "lean"):
+        _execute_in_process = True   # already external processes; no nested worker
     if backend in ("sympy", "scipy") and _worker_enabled():
         out = _run_worker(payload, timeout)
     elif backend == "pint" and _worker_enabled():

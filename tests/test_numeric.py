@@ -79,5 +79,31 @@ class TestDispatch(unittest.TestCase):
             compute("3 m", "convert", backend="pint")
 
 
+
+class TestExternal(unittest.TestCase):
+    def test_disabled_by_default(self):
+        status = backend_status()
+        for backend in ("wolfram", "lean"):
+            self.assertFalse(status[backend]["available"])
+            self.assertIn("disabled", status[backend].get("reason", ""))
+
+    def test_calls_fail_with_reason(self):
+        for backend, op in (("wolfram", "eval"), ("lean", "check")):
+            with self.assertRaises(BackendUnavailable):
+                compute("1+1" if backend == "wolfram" else "theorem t : True := by trivial",
+                        op, backend=backend)
+
+    def test_enabling_without_binary_still_fails_cleanly(self):
+        import os
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"CALCBOX_EXTERNAL": "1"}, clear=False):
+            with mock.patch.object(backends, "_which", return_value=None):
+                status = backend_status()
+                self.assertFalse(status["wolfram"]["available"])
+                self.assertIn("not found", status["wolfram"]["reason"])
+                with self.assertRaises(BackendUnavailable):
+                    compute("1+1", "eval", backend="wolfram")
+
+
 if __name__ == "__main__":
     unittest.main()

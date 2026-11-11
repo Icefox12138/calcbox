@@ -115,17 +115,15 @@ or disabled external engine → 503).
 
 ## Status
 
-0.2.0 — **SymPy, SciPy, Pint and Control ported**, each byte-for-byte compatible with
-the implementation it came from (15/15 parity cases identical).
+0.3.0 — all six backends wired: SymPy, SciPy, Pint, Control, and the external
+engines Wolfram and Lean (disabled unless CALCBOX_EXTERNAL=1; both fail with a
+reason when the binary is absent, never silently).
 
-- symbolic: simplify, diff, integrate (indefinite and definite), solve, limit, value,
-  latex, factor, expand
-- numeric: quad (with a cross-check against the symbolic integral), minimize, root
-- units: convert; control: step
-- external engines (Wolfram, Lean) remain disabled unless CALCBOX_EXTERNAL=1
+15/15 parity with the implementation this was ported from, 36 tests.
 
-Every call runs in a killable subprocess worker (~0.2-1.2 s overhead depending on the
-backend); CALCBOX_WORKER=0 runs in-process for debugging.
+Every local call runs in a killable subprocess worker (~0.2-1.2 s overhead);
+CALCBOX_WORKER=0 runs in-process for debugging. External engines run in-process
+because they are already separate processes.
 
 ## License
 
