@@ -67,14 +67,9 @@ class TestSymPy(unittest.TestCase):
                 with self.assertRaises(BackendUnavailable):
                     compute("1+1", op, backend=backend)
 
-    def test_not_yet_ported_backends_say_so(self):
-        for backend, op in (("scipy", "quad"), ("pint", "convert"),
-                            ("control", "step")):
-            if BACKENDS[backend]["available"]:
-                with self.assertRaises(BackendUnavailable) as ctx:
-                    compute("x", op, backend=backend,
-                            data={"num": [1], "den": [1, 1]})
-                self.assertIn("not ported", str(ctx.exception))
+    def test_external_still_unavailable(self):
+        self.assertFalse(BACKENDS["wolfram"]["available"])
+        self.assertFalse(BACKENDS["lean"]["available"])
 
 
 if __name__ == "__main__":

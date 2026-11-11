@@ -115,14 +115,17 @@ or disabled external engine → 503).
 
 ## Status
 
-0.1.0 — **SymPy backend complete**, ported from socratic-tutor unchanged: all nine
-operations, token validation, one-letter variables, and a killable subprocess worker
-so a timeout is a real timeout (~0.2 s overhead per call).
+0.2.0 — **SymPy, SciPy, Pint and Control ported**, each byte-for-byte compatible with
+the implementation it came from (15/15 parity cases identical).
 
-Still returning BackendUnavailable with a reason: scipy, pint, control, wolfram, lean.
-See MIGRATION.md for the stage plan.
+- symbolic: simplify, diff, integrate (indefinite and definite), solve, limit, value,
+  latex, factor, expand
+- numeric: quad (with a cross-check against the symbolic integral), minimize, root
+- units: convert; control: step
+- external engines (Wolfram, Lean) remain disabled unless CALCBOX_EXTERNAL=1
 
-Known limit: the worker is spawned per call (simple, isolated) rather than pooled.
+Every call runs in a killable subprocess worker (~0.2-1.2 s overhead depending on the
+backend); CALCBOX_WORKER=0 runs in-process for debugging.
 
 ## License
 

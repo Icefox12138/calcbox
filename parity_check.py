@@ -23,6 +23,11 @@ CASES = [
     ("x^2-1", "factor", {}),
     ("x+1", "latex", {}),
     ("x^2+2*x+1", "simplify", {}),
+    ("x^2", "quad", {"point": "0", "target": "1"}),
+    ("(x-2)^2", "minimize", {"point": "0"}),
+    ("x^2-2", "root", {"point": "1", "target": "2"}),
+    ("3 m", "convert", {"target": "ft", "backend": "pint"}),
+    ("", "step", {"backend": "control", "data": {"num": [1], "den": [1, 2, 1]}}),
 ]
 
 bad = 0
@@ -40,7 +45,7 @@ for expr, op, kw in CASES:
     a_v = (a.get("credentials") or a.get("verification") or {}).get("verification")
     b_v = b.get("verification")
     print("%-14s %-10s result=%s  sidecar_verification=%s  calcbox_verification=%s" % (
-        expr, op, "same" if same_result else "DIFF",
+        expr or "(control)", op, "same" if same_result else "DIFF",
         (a_v or {}).get("method") if isinstance(a_v, dict) else a_v,
         (b_v or {}).get("method")))
     if not same_result:

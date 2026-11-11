@@ -77,6 +77,8 @@ class ComputeResult:
     result: Any
     latex: str = ""
     numeric: Any = None
+    details: Optional[Dict[str, Any]] = None
+    cross_check: Optional[Dict[str, Any]] = None
     assumptions: Dict[str, Any] = field(default_factory=dict)
     verification: Dict[str, Any] = field(default_factory=dict)
     disputed: bool = False
@@ -92,7 +94,8 @@ class ComputeResult:
             "engine_version": self.engine_version, "operation": self.operation,
             "input": self.input, "variable": self.variable,
             "result": self.result, "latex": self.latex,
-            "numeric": self.numeric, "assumptions": self.assumptions,
+            "numeric": self.numeric, "details": self.details,
+            "cross_check": self.cross_check, "assumptions": self.assumptions,
             "verification": self.verification, "disputed": self.disputed,
             "sandbox": self.sandbox, "credentials": self.credentials,
             "input_sha256": self.input_sha256,

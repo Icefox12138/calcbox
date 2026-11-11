@@ -246,6 +246,27 @@ def _sympy(expr, op, var, point, target, timeout):
     return payload
 
 
+def _verification(backend, out):
+    details = out.get("details") or {}
+    if backend == "scipy":
+        if "error" in details:
+            return {"method": "quad_error", "ok": details["error"] < 1e-6,
+                    "passed": details["error"] < 1e-6, "error": details["error"]}
+        if "success" in details:
+            return {"method": "optimizer_success", "ok": bool(details["success"]),
+                    "passed": bool(details["success"])}
+        if "converged" in details:
+            return {"method": "root_converged", "ok": bool(details["converged"]),
+                    "passed": bool(details["converged"])}
+        return {"method": "scipy", "ok": True, "passed": True}
+    if backend == "pint":
+        return {"method": "unit_registry", "ok": True, "passed": True}
+    if backend == "control":
+        return {"method": "step_info", "ok": "SteadyStateValue" in details,
+                "passed": "SteadyStateValue" in details}
+    return {"method": backend, "ok": True, "passed": True}
+
+
 def _worker_enabled():
     return str(os.environ.get(WORKER_ENV, "1")).lower() not in ("0", "false", "no")
 
@@ -267,6 +288,9 @@ def _run_worker(payload, timeout):
         env["CALCBOX_SANDBOX_TEMP"] = run_dir
         env["TMP"] = env["TEMP"] = env["TMPDIR"] = run_dir
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        os.makedirs(os.path.join(run_dir, "mpl"), exist_ok=True)
+        env["MPLCONFIGDIR"] = os.path.join(run_dir, "mpl")
+        env["MPLBACKEND"] = "Agg"
         cmd = [sys.executable, "-m", "calcbox.worker", in_path, out_path]
         proc = subprocess.Popen(cmd, cwd=run_dir, env=env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -289,6 +313,122 @@ def _run_worker(payload, timeout):
         shutil.rmtree(run_dir, ignore_errors=True)
 
 
+
+def _scipy_func(expr, var):
+    import sympy as sp
+
+    local = _locals(var)
+    e = sp.sympify(expr.replace("^", "**"), locals=local)
+    return sp.lambdify(local[var], e, "numpy"), e, local[var]
+
+
+def _scipy(expr, op, var, point, target, timeout):
+    import sympy as sp
+
+    if not _available("scipy"):
+        raise BackendUnavailable("scipy is not installed")
+    if op not in OPS_NUMERIC:
+        raise ComputeError("scipy operation must be one of %s" % sorted(OPS_NUMERIC))
+    f, e, sym = _scipy_func(expr, var)
+    try:
+        if op == "quad":
+            from scipy.integrate import quad
+            lo = float(sp.sympify(point).evalf())
+            hi = float(sp.sympify(target or "1").evalf())
+            value, err = quad(lambda x: float(f(x)), lo, hi)
+            cross = None
+            try:
+                exact = float(sp.N(sp.integrate(e, (sym, lo, hi))))
+                cross = {"backend": "sympy", "value": exact,
+                         "difference": abs(exact - value)}
+            except Exception:
+                cross = None
+            disputed = bool(cross and cross["difference"] > max(
+                1e-6, 1e-6 * abs(cross["value"])))
+            return {"result": value, "latex": sp.latex(e), "numeric": value,
+                    "details": {"lower": lo, "upper": hi, "error": err},
+                    "cross_check": cross, "disputed": disputed}
+        if op == "minimize":
+            from scipy.optimize import minimize
+            x0 = float(sp.sympify(point or "0").evalf())
+            res = minimize(lambda x: float(f(x[0])), [x0])
+            return {"result": float(res.x[0]), "latex": sp.latex(e),
+                    "numeric": float(res.fun),
+                    "details": {"success": bool(res.success),
+                                "iterations": int(res.nit)}}
+        if op == "root":
+            from scipy.optimize import root_scalar
+            lo = float(sp.sympify(point or "0").evalf())
+            hi = float(sp.sympify(target or "1").evalf())
+            res = root_scalar(lambda x: float(f(x)), bracket=(lo, hi))
+            return {"result": float(res.root), "latex": sp.latex(e),
+                    "numeric": 0.0,
+                    "details": {"converged": bool(res.converged),
+                                "bracket": [lo, hi]}}
+    except ComputeError:
+        raise
+    except Exception as e:
+        raise ComputeError(str(e))
+    raise ComputeError("unknown scipy operation")
+
+
+def _pint(expr, op, target, timeout):
+    if not _available("pint"):
+        raise BackendUnavailable("pint is not installed; pip install pint")
+    if op != "convert":
+        raise ComputeError("pint operation must be convert")
+    if not target:
+        raise ComputeError("target unit is required for convert")
+    if not re.fullmatch(r"[0-9A-Za-z .,*/^()_+-]+", expr):
+        raise ComputeError("unit expression contains invalid characters")
+    try:
+        import pint
+
+        ureg = pint.UnitRegistry()
+        value = ureg(expr)
+        out = value.to(target)
+        return {"result": str(out), "latex": "",
+                "numeric": float(out.magnitude),
+                "details": {"magnitude": float(out.magnitude),
+                            "units": str(out.units)}}
+    except Exception as e:
+        raise ComputeError(str(e))
+
+
+def _control(data, op, timeout):
+    if not _available("control"):
+        raise BackendUnavailable("control is not installed; pip install control")
+    if op != "step":
+        raise ComputeError("control operation must be step")
+    data = data or {}
+    num, den = data.get("num"), data.get("den")
+    if (not isinstance(num, list) or not isinstance(den, list)
+            or not num or not den
+            or not all(isinstance(x, (int, float)) for x in num + den)):
+        raise ComputeError("control step needs data.num and data.den number lists")
+    # matplotlib (a control dependency) writes a cache on import; keep it in a
+    # directory the sandbox allows.
+    os.environ.setdefault("MPLBACKEND", "Agg")
+    cache = os.environ.get("CALCBOX_SANDBOX_TEMP") or os.path.join(
+        tempfile.gettempdir(), "calcbox-mpl")
+    try:
+        os.makedirs(cache, exist_ok=True)
+        os.environ.setdefault("MPLCONFIGDIR", os.path.join(cache, "mpl"))
+    except OSError:
+        pass
+    try:
+        import control
+
+        sys = control.TransferFunction(num, den)
+        tf = control.step_info(sys)
+        return {"result": str(sys), "latex": "",
+                "numeric": float(tf.get("SteadyStateValue", 0.0)),
+                "details": {k: (float(v) if isinstance(v, (int, float)) else v)
+                            for k, v in tf.items()}}
+    except Exception as e:
+        raise ComputeError(str(e))
+
+
 def _execute_local(backend, expression, operation, variable="x", point="0",
                    target=None, data=None, timeout=8.0):
     """Run one backend in-process. Policy lives in calcbox.sandbox."""
@@ -305,8 +445,19 @@ def _execute_local(backend, expression, operation, variable="x", point="0",
         if not re.fullmatch(r"[A-Za-z]", variable or ""):
             raise ComputeError("variable must be one letter")
         return _sympy(expression, operation, variable, point, target, timeout)
-    if backend in ("scipy", "pint", "control"):
-        raise BackendUnavailable("%s backend is not ported yet; see MIGRATION.md" % backend)
+    if backend == "scipy":
+        expression = _validate(expression)
+        point = _validate(point, 100)
+        if target:
+            target = _validate(target, 100)
+        if not re.fullmatch(r"[A-Za-z]", variable or ""):
+            raise ComputeError("variable must be one letter")
+        return _scipy(expression, operation, variable, point, target, timeout)
+    if backend == "pint":
+        expression = _validate(expression)
+        return _pint(expression, operation, target, timeout)
+    if backend == "control":
+        return _control(data, operation, timeout)
     raise BackendUnavailable("external backend %r disabled or not implemented" % backend)
 
 
@@ -334,11 +485,17 @@ def compute(expression, operation="simplify", variable="x", point="0",
                          variable=variable, point=point, target=target,
                          data=data, timeout=timeout, backend=backend)
     payload = req.payload()
-    out = _execute_local(**payload)
+    if backend in ("sympy", "scipy") and _worker_enabled():
+        out = _run_worker(payload, timeout)
+    elif backend == "pint" and _worker_enabled():
+        out = _run_worker(payload, timeout)
+    else:
+        out = _execute_local(**payload)
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True,
                                        ensure_ascii=False).encode("utf-8")).hexdigest()
     generated = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    verification = out.get("verification", {})
+    verification = out.get("verification") or _verification(backend, out)
+    disputed = bool(out.get("disputed"))
     credentials = {
         "backend": backend,
         "engine_version": status[backend].get("version"),
@@ -346,7 +503,8 @@ def compute(expression, operation="simplify", variable="x", point="0",
         "operation": operation,
         "assumptions": _assumptions(backend, variable, point, target, data),
         "verification": verification,
-        "disputed": False,
+        "cross_check": out.get("cross_check"),
+        "disputed": disputed,
         "sandbox": "audit-only",
         "generated_at": generated,
     }
@@ -354,9 +512,10 @@ def compute(expression, operation="simplify", variable="x", point="0",
         ok=True, backend=backend, engine_version=status[backend].get("version"),
         operation=operation, input=expression, variable=variable,
         result=out["result"], latex=out.get("latex", ""),
-        numeric=out.get("numeric"),
+        numeric=out.get("numeric"), details=out.get("details"),
+        cross_check=out.get("cross_check"),
         assumptions=credentials["assumptions"],
-        verification=verification, disputed=False, sandbox="audit-only",
+        verification=verification, disputed=disputed, sandbox="audit-only",
         credentials=credentials, input_sha256=digest, generated_at=generated,
         elapsed_ms=round((time.perf_counter() - t0) * 1000, 3),
     )
