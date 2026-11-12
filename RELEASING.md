@@ -71,3 +71,36 @@ enters a shell history or a chat log.
 calcbox is Python-only. If the MCP server is ever published to npm as well, add
 a second job with `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}`, or use npm's
 trusted publishing for GitHub Actions. Not needed today.
+
+
+## Repository metadata
+
+Copy-paste for `gh` (no secrets involved):
+
+```bash
+gh repo create Icefox12138/calcbox --private --source . --push
+
+gh repo edit Icefox12138/calcbox \
+  --description "Backend-agnostic math compute kernel: symbolic, numeric, units and control, with provenance (backend, version, assumptions, verification) in every answer. Python API, CLI, HTTP and MCP." \
+  --add-topic mathematics --add-topic sympy --add-topic scipy \
+  --add-topic symbolic-computation --add-topic computer-algebra \
+  --add-topic units --add-topic control-systems --add-topic calculator \
+  --add-topic provenance --add-topic mcp --add-topic mcp-server \
+  --add-topic python
+```
+
+Same thing over the REST API:
+
+```bash
+curl -sX PATCH -H "Authorization: Bearer $GH_TOKEN" \
+  https://api.github.com/repos/Icefox12138/calcbox \
+  -d '{"description":"...","homepage":"https://pypi.org/project/calcbox/"}' -H "Content-Type: application/json"
+
+curl -sX PUT -H "Authorization: Bearer $GH_TOKEN" \
+  https://api.github.com/repos/Icefox12138/calcbox/topics \
+  -d '{"names":["mathematics","sympy","scipy","symbolic-computation","computer-algebra","units","control-systems","calculator","provenance","mcp","mcp-server","python"]}' \
+  -H "Content-Type: application/json"
+```
+
+Topics are chosen to stay truthful: no `llm`, no `ai`, no `sandbox` — this package
+evaluates expressions, and its sandbox is audit-only.
