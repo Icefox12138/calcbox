@@ -142,27 +142,17 @@ no token at all.
 
 1. Create an **empty** repository on GitHub (no README, no .gitignore):
    <https://github.com/new> — owner `Icefox12138`, name `calcbox`, private.
-2. Run the helper once, from a normal PowerShell window (not inside any sandbox).
-   No PowerShell 7 is required — Windows PowerShell 5.1 works, and the wrapper
-   bypasses the execution policy for this run only:
+2. Create a key **once**, in a normal PowerShell window. Nothing from this step is
+   committed: keys belong to the machine, not to the repository.
 
    ```powershell
-   scripts\setup-ssh.cmd
+   ssh-keygen -t ed25519 -C "calcbox" -f $env:USERPROFILE\.ssh\id_ed25519
+   Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub | Set-Clipboard
    ```
 
-   Equivalent without the wrapper:
-
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-ssh.ps1
-   ```
-
-   It generates `id_ed25519` if missing, copies the **public** key to the
-   clipboard, opens the GitHub "new SSH key" page, verifies the handshake, and
-   points `origin` at `git@github.com:Icefox12138/calcbox.git`.
-3. ```powershell
-   git push -u origin main
-   ```
-
+   Paste that single line at <https://github.com/settings/ssh/new> (SSH keys,
+   not GPG). Check it with `ssh -T git@github.com`: it should answer
+   `Hi <user>! You've successfully authenticated`.
 ### If SSH is not an option
 
 Cache a token once, in your own terminal, so it never enters a chat log:
@@ -192,9 +182,9 @@ key generation works (-N '""' produces an unencrypted key non-interactively)
 Set-Clipboard available
 ```
 
-`scripts/setup-ssh.cmd` exists because 5.1 refuses to run `.ps1` files under the
-default `Restricted` policy; the wrapper passes `-ExecutionPolicy Bypass` for that
-single invocation instead of changing a machine-wide setting.
+Windows PowerShell 5.1 refuses to run `.ps1` files under the default `Restricted`
+policy; the commands above are inline for that reason, and nothing needs a
+machine-wide policy change.
 
 
 ### Key type
@@ -202,7 +192,8 @@ single invocation instead of changing a machine-wide setting.
 `ed25519` is the default and is what GitHub recommends. RSA works too:
 
 ```powershell
-scripts\setup-ssh.cmd -KeyType rsa -KeyName id_rsa -Bits 4096
+ssh-keygen -t rsa -b 4096 -C "calcbox" -f $env:USERPROFILE\.ssh\id_rsa
+Get-Content $env:USERPROFILE\.ssh\id_rsa.pub | Set-Clipboard
 ```
 
 What "ssh-rsa" actually means, because the two are easy to conflate:
@@ -232,12 +223,12 @@ ssh-rsa       AAAAB3NzaC1yc2EAAAADAQABAAACAQ...your-key...  calcbox@MACHINE
 Print and copy it without guessing:
 
 ```powershell
-scripts\show-pubkey.cmd              # ed25519
-scripts\show-pubkey.cmd -KeyName id_rsa
+Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub     # ed25519
+Get-Content $env:USERPROFILE\.ssh\id_rsa.pub         # rsa
 ```
 
-The helper prints the line, puts it on the clipboard, and shows the fingerprint
-so you can compare it with what GitHub displays after saving.
+Copy that single line. `ssh-keygen -l -f <file>.pub` prints the fingerprint if you
+want to compare it with what GitHub shows after saving.
 
 Never paste any of these:
 

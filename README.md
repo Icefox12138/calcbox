@@ -115,7 +115,7 @@ or disabled external engine → 503).
 
 ## Status
 
-0.3.0 — all six backends wired: SymPy, SciPy, Pint, Control, and the external
+0.3.1 — all six backends wired: SymPy, SciPy, Pint, Control, and the external
 engines Wolfram and Lean (disabled unless CALCBOX_EXTERNAL=1; both fail with a
 reason when the binary is absent, never silently).
 
