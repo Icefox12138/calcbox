@@ -75,37 +75,19 @@ trusted publishing for GitHub Actions. Not needed today.
 
 ## Repository metadata
 
-Copy-paste for `gh` (no secrets involved):
+No CLI is needed; the fields live in the web UI.
 
-```bash
-gh repo create Icefox12138/calcbox --private --source . --push
+| Field | Value |
+|---|---|
+| Description | Backend-agnostic math compute kernel: symbolic, numeric, units and control, with provenance (backend, version, assumptions, verification) in every answer. Python API, CLI, HTTP and MCP. |
+| Website | https://pypi.org/project/calcbox/ (after the first release) |
+| Topics | mathematics, sympy, scipy, symbolic-computation, computer-algebra, units, control-systems, calculator, provenance, mcp, mcp-server, python |
 
-gh repo edit Icefox12138/calcbox \
-  --description "Backend-agnostic math compute kernel: symbolic, numeric, units and control, with provenance (backend, version, assumptions, verification) in every answer. Python API, CLI, HTTP and MCP." \
-  --add-topic mathematics --add-topic sympy --add-topic scipy \
-  --add-topic symbolic-computation --add-topic computer-algebra \
-  --add-topic units --add-topic control-systems --add-topic calculator \
-  --add-topic provenance --add-topic mcp --add-topic mcp-server \
-  --add-topic python
-```
+Description: repo → **About** (gear icon) → paste → Save.
+Topics: same dialog → **Topics** → add each one → Save.
 
-Same thing over the REST API:
-
-```bash
-curl -sX PATCH -H "Authorization: Bearer $GH_TOKEN" \
-  https://api.github.com/repos/Icefox12138/calcbox \
-  -d '{"description":"...","homepage":"https://pypi.org/project/calcbox/"}' -H "Content-Type: application/json"
-
-curl -sX PUT -H "Authorization: Bearer $GH_TOKEN" \
-  https://api.github.com/repos/Icefox12138/calcbox/topics \
-  -d '{"names":["mathematics","sympy","scipy","symbolic-computation","computer-algebra","units","control-systems","calculator","provenance","mcp","mcp-server","python"]}' \
-  -H "Content-Type: application/json"
-```
-
-Topics are chosen to stay truthful: no `llm`, no `ai`, no `sandbox` — this package
-evaluates expressions, and its sandbox is audit-only.
-
-
+Topics stay truthful: no llm, no ai, no sandbox — the package evaluates
+expressions and its sandbox is audit-only.
 ## Creating the `pypi` environment
 
 The workflow declares `environment: pypi`. That gives two things: the OIDC token
@@ -126,18 +108,22 @@ automatically on the first run, but creating it first lets you add the gate.
 4. **Environment secrets**: leave empty. Trusted Publishing uses no secret.
 5. **Save protection rules**
 
-### CLI equivalent
+### Without a CLI
+
+`gh` is not installable on this machine, and the environment fields are all in
+the web UI above, so nothing else is required. If you ever automate it, the
+REST calls are:
 
 ```bash
-# create the environment (no rules)
-gh api -X PUT repos/Icefox12138/calcbox/environments/pypi
+curl -sX PUT -H "Authorization: Bearer $GH_TOKEN" \
+  https://api.github.com/repos/Icefox12138/calcbox/environments/pypi
 
-# add yourself as a required reviewer (needs your numeric user id)
-MY_ID=$(gh api users/Icefox12138 --jq .id)
-gh api -X PUT repos/Icefox12138/calcbox/environments/pypi \
-  -f "reviewers[][type]=User" -F "reviewers[][id]=$MY_ID"
+curl -sX PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" \
+  https://api.github.com/repos/Icefox12138/calcbox/environments/pypi \
+  -d '{"reviewers":[{"type":"User","id":123456}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
 ```
 
+`$GH_TOKEN` is set in your own terminal, never pasted into a chat.
 ### Checking it worked
 
 - Settings → Environments shows `pypi` with the reviewer you added.
@@ -147,3 +133,37 @@ gh api -X PUT repos/Icefox12138/calcbox/environments/pypi \
   (GitHub recreates it unprotected) — and PyPI's pending publisher will only
   accept the token when the declared environment matches what it was configured
   with.
+
+
+## First push without `gh`
+
+The local machine cannot install `gh`, so use SSH: it is the only route that needs
+no token at all.
+
+1. Create an **empty** repository on GitHub (no README, no .gitignore):
+   <https://github.com/new> — owner `Icefox12138`, name `calcbox`, private.
+2. Run the helper once, from a normal PowerShell window (not inside any sandbox):
+
+   ```powershell
+   pwsh -File scripts/setup-ssh.ps1
+   ```
+
+   It generates `id_ed25519` if missing, copies the **public** key to the
+   clipboard, opens the GitHub "new SSH key" page, verifies the handshake, and
+   points `origin` at `git@github.com:Icefox12138/calcbox.git`.
+3. ```powershell
+   git push -u origin main
+   ```
+
+### If SSH is not an option
+
+Cache a token once, in your own terminal, so it never enters a chat log:
+
+```powershell
+git remote set-url origin https://github.com/Icefox12138/calcbox.git
+git push -u origin main      # username: your account, password: the token
+```
+
+Windows Credential Manager (`wincred`, already configured) stores it, and later
+pushes need no credential. Tokens used this way should be fine-grained and
+short-lived (7 days).
