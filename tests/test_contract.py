@@ -1,7 +1,7 @@
 import importlib.util
 import unittest
 
-from calcbox import backend_status, compute
+from calcbox import backends, backend_status, compute
 from calcbox.contract import BackendUnavailable, ComputeError
 
 HAS_SYMPY = importlib.util.find_spec("sympy") is not None
@@ -27,6 +27,19 @@ class TestSurface(unittest.TestCase):
     def test_unavailable_backend_says_why(self):
         with self.assertRaises(BackendUnavailable):
             compute("1+1", "eval", backend="wolfram")
+
+
+class TestBareInstall(unittest.TestCase):
+    """Without any extra installed the package must still import and report."""
+
+    def test_status_without_sympy(self):
+        from unittest import mock
+        with mock.patch.object(backends, "_available", return_value=False):
+            status = backend_status()
+            self.assertFalse(status["sympy"]["available"])
+            self.assertIn("not installed", status["sympy"]["reason"])
+            with self.assertRaises(BackendUnavailable):
+                compute("1+1", "simplify")
 
 
 @unittest.skipUnless(HAS_SYMPY, "sympy not installed")

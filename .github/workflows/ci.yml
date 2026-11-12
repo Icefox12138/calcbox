@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: unit tests
+        run: |
+          uv run --python ${{ matrix.python }} \
+            --with sympy --with scipy --with pint --with control \
+            --with fastapi --with pydantic --with httpx2 \
+            python -m unittest discover -s tests -p "test_*.py" -v
+
+  bare-install:
+    name: bare install (no extras)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: install without any backend
+        run: |
+          uv venv --python 3.12 /tmp/bare
+          uv pip install --python /tmp/bare/bin/python .
+          /tmp/bare/bin/python - <<"PY"
+          import calcbox
+          from calcbox import backend_status
+          print("version:", calcbox.__version__)
+          status = backend_status()
+          assert set(status) == {"sympy", "scipy", "pint", "control", "wolfram", "lean"}
+          assert status["sympy"]["available"] is False
+          assert "not installed" in status["sympy"]["reason"]
+          print("bare install reports every backend as unavailable, as intended")
+          PY
+
+  build:
+    name: build and check the artefacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      - run: uvx twine check dist/*

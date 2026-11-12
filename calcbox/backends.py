@@ -80,10 +80,12 @@ def _which(names):
 
 
 def backend_status():
-    """Availability of every backend, including why one is unavailable."""
-    import sympy as sp
+    """Availability of every backend, including why one is unavailable.
 
-    sympy = True
+    Nothing is imported here beyond a find_spec probe: a bare install (no
+    extras) must still answer this call instead of raising ImportError.
+    """
+    sympy = _available("sympy")
     scipy = _available("scipy")
     pint = _available("pint")
     control = _available("control")
@@ -92,7 +94,7 @@ def backend_status():
     lean = _which(("lean", "lake"))
 
     status = {
-        "sympy": BackendStatus(sympy, str(getattr(sp, "__version__", "?")),
+        "sympy": BackendStatus(sympy, _version("sympy"),
                                None if sympy else "sympy not installed"),
         "scipy": BackendStatus(scipy, _version("scipy"),
                                None if scipy else "scipy not installed"),
