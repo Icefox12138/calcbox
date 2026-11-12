@@ -217,3 +217,36 @@ This machine runs OpenSSH 9.5p2 and advertises `rsa-sha2-256` and `rsa-sha2-512`
 so an RSA key authenticates fine — but nothing here ever asks for the SHA-1
 `ssh-rsa` algorithm, and forcing it with `PubkeyAcceptedAlgorithms +ssh-rsa`
 would only produce a rejection from GitHub.
+
+
+### GitHub says the key is invalid
+
+You almost certainly copied the **private** key, or an empty/partial file.
+GitHub wants one single line, the contents of `<key>.pub`:
+
+```
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...your-key...  calcbox@MACHINE
+ssh-rsa       AAAAB3NzaC1yc2EAAAADAQABAAACAQ...your-key...  calcbox@MACHINE
+```
+
+Print and copy it without guessing:
+
+```powershell
+scripts\show-pubkey.cmd              # ed25519
+scripts\show-pubkey.cmd -KeyName id_rsa
+```
+
+The helper prints the line, puts it on the clipboard, and shows the fingerprint
+so you can compare it with what GitHub displays after saving.
+
+Never paste any of these:
+
+| Not this | Why |
+|---|---|
+| `-----BEGIN OPENSSH PRIVATE KEY-----` … | that is the private key; GitHub will reject it and you must treat it as leaked |
+| `256 SHA256:...` from `ssh-keygen -l` | that is a fingerprint, not a key |
+| the file path `C:\Users\...\id_ed25519.pub` | GitHub needs the contents |
+
+Also check the page: <https://github.com/settings/ssh/new> is **SSH keys**.
+Keys pasted into *GPG keys* or a repository's *Deploy keys* produce the same
+"invalid key" message.
