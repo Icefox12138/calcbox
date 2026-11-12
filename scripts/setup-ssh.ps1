@@ -12,27 +12,43 @@
   pwsh -File scripts/setup-ssh.ps1 -Owner Icefox12138 -Repo calcbox
 #>
 param(
-    [string]$Owner = "Icefox12138",
-    [string]$Repo  = "calcbox"
+    [string]$Owner   = "Icefox12138",
+    [string]$Repo    = "calcbox",
+    [ValidateSet("ed25519", "rsa")]
+    [string]$KeyType = "ed25519",
+    [int]$Bits       = 4096,
+    [string]$KeyName = "id_ed25519"
 )
 
 $ErrorActionPreference = "Stop"
 $sshDir = Join-Path $env:USERPROFILE ".ssh"
-$key    = Join-Path $sshDir "id_ed25519"
+$key    = Join-Path $sshDir $KeyName
 
 # 1. key
 if (-not (Test-Path $key)) {
     New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
     Write-Host "Generating $key ..."
     # -N '""' = empty passphrase (PowerShell must pass a quoted empty string)
-    ssh-keygen -t ed25519 -C "$Repo@$env:COMPUTERNAME" -f $key -N '""'
+    if ($KeyType -eq "rsa") {
+        # RSA still works with GitHub, but only through rsa-sha2-256/512.
+        # The legacy ssh-rsa (SHA-1) signature is disabled in OpenSSH >= 8.8 and
+        # rejected by GitHub, so it is never selected here.
+        ssh-keygen -t rsa -b $Bits -C "$Repo@$env:COMPUTERNAME" -f $key -N '""'
+    } else {
+        ssh-keygen -t ed25519 -C "$Repo@$env:COMPUTERNAME" -f $key -N '""'
+    }
 } else {
     Write-Host "Using the existing key: $key"
 }
 
 # 2. public half to the clipboard
+if (-not (Test-Path "$key.pub") -or (Get-Item "$key.pub").Length -eq 0) {
+    Write-Warning "The public key file is missing or empty; regenerate the key in a normal terminal."
+    return 1
+}
 Get-Content "$key.pub" | Set-Clipboard
 Write-Host ""
+Write-Host "Key type: $KeyType ($((ssh-keygen -l -f "$key.pub") -split ' ')[0] bits)"
 Write-Host "The PUBLIC key is on your clipboard. Paste it at:" -ForegroundColor Cyan
 Write-Host "  https://github.com/settings/ssh/new"
 Start-Process "https://github.com/settings/ssh/new"

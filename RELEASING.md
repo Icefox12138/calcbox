@@ -195,3 +195,25 @@ Set-Clipboard available
 `scripts/setup-ssh.cmd` exists because 5.1 refuses to run `.ps1` files under the
 default `Restricted` policy; the wrapper passes `-ExecutionPolicy Bypass` for that
 single invocation instead of changing a machine-wide setting.
+
+
+### Key type
+
+`ed25519` is the default and is what GitHub recommends. RSA works too:
+
+```powershell
+scripts\setup-ssh.cmd -KeyType rsa -KeyName id_rsa -Bits 4096
+```
+
+What "ssh-rsa" actually means, because the two are easy to conflate:
+
+| Thing | Status |
+|---|---|
+| **RSA key** (`ssh-keygen -t rsa`) | Works. GitHub accepts keys of 2048 bits or more. |
+| **`rsa-sha2-256/512` signature** | Works, and is what an RSA key actually uses. |
+| **`ssh-rsa` (SHA-1) signature** | **Dead.** Disabled by default in OpenSSH 8.8+ and rejected by GitHub. |
+
+This machine runs OpenSSH 9.5p2 and advertises `rsa-sha2-256` and `rsa-sha2-512`,
+so an RSA key authenticates fine — but nothing here ever asks for the SHA-1
+`ssh-rsa` algorithm, and forcing it with `PubkeyAcceptedAlgorithms +ssh-rsa`
+would only produce a rejection from GitHub.
