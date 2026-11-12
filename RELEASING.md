@@ -104,3 +104,46 @@ curl -sX PUT -H "Authorization: Bearer $GH_TOKEN" \
 
 Topics are chosen to stay truthful: no `llm`, no `ai`, no `sandbox` — this package
 evaluates expressions, and its sandbox is audit-only.
+
+
+## Creating the `pypi` environment
+
+The workflow declares `environment: pypi`. That gives two things: the OIDC token
+PyPI verifies, and an optional human approval gate. GitHub creates the environment
+automatically on the first run, but creating it first lets you add the gate.
+
+### Web UI
+
+1. Repository → **Settings** → **Environments** → **New environment**
+2. Name: `pypi` (must match the workflow exactly) → **Configure environment**
+3. **Deployment protection rules**
+   - ✅ **Required reviewers** → add yourself (up to six people or teams).
+     A run that reaches `publish` then waits for approval.
+   - **Deployment branches and tags** → *Selected branches and tags* → add a
+     **tag** rule `v*`, so only release tags can deploy.
+     Do **not** pick "Protected branches only": a plain tag is not a protected
+     branch and the deployment would be rejected.
+4. **Environment secrets**: leave empty. Trusted Publishing uses no secret.
+5. **Save protection rules**
+
+### CLI equivalent
+
+```bash
+# create the environment (no rules)
+gh api -X PUT repos/Icefox12138/calcbox/environments/pypi
+
+# add yourself as a required reviewer (needs your numeric user id)
+MY_ID=$(gh api users/Icefox12138 --jq .id)
+gh api -X PUT repos/Icefox12138/calcbox/environments/pypi \
+  -f "reviewers[][type]=User" -F "reviewers[][id]=$MY_ID"
+```
+
+### Checking it worked
+
+- Settings → Environments shows `pypi` with the reviewer you added.
+- Push a tag → the run stops at **publish** with *"Waiting for approval"*;
+  approve under **Actions → the run → Review deployments**.
+- If you remove the environment, the workflow still runs but without the gate
+  (GitHub recreates it unprotected) — and PyPI's pending publisher will only
+  accept the token when the declared environment matches what it was configured
+  with.
