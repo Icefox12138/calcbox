@@ -125,6 +125,10 @@ Every local call runs in a killable subprocess worker (~0.2-1.2 s overhead);
 CALCBOX_WORKER=0 runs in-process for debugging. External engines run in-process
 because they are already separate processes.
 
+## Releasing
+
+See [RELEASING.md](RELEASING.md): PyPI Trusted Publishing, no tokens.
+
 ## License
 
 MIT.
