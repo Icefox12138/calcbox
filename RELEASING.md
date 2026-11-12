@@ -142,10 +142,18 @@ no token at all.
 
 1. Create an **empty** repository on GitHub (no README, no .gitignore):
    <https://github.com/new> — owner `Icefox12138`, name `calcbox`, private.
-2. Run the helper once, from a normal PowerShell window (not inside any sandbox):
+2. Run the helper once, from a normal PowerShell window (not inside any sandbox).
+   No PowerShell 7 is required — Windows PowerShell 5.1 works, and the wrapper
+   bypasses the execution policy for this run only:
 
    ```powershell
-   pwsh -File scripts/setup-ssh.ps1
+   scripts\setup-ssh.cmd
+   ```
+
+   Equivalent without the wrapper:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-ssh.ps1
    ```
 
    It generates `id_ed25519` if missing, copies the **public** key to the
@@ -167,3 +175,23 @@ git push -u origin main      # username: your account, password: the token
 Windows Credential Manager (`wincred`, already configured) stores it, and later
 pushes need no credential. Tokens used this way should be fine-grained and
 short-lived (7 days).
+
+
+## PowerShell compatibility
+
+The helper targets **Windows PowerShell 5.1** (the version that ships with
+Windows) and also runs under PowerShell 7. It uses nothing newer than
+`Set-Clipboard`, and it has no Chinese text, so the file needs no BOM and 5.1's
+ANSI default does not mangle it.
+
+Verified on this machine:
+
+```
+parses OK under 5.1.26100.9711
+key generation works (-N '""' produces an unencrypted key non-interactively)
+Set-Clipboard available
+```
+
+`scripts/setup-ssh.cmd` exists because 5.1 refuses to run `.ps1` files under the
+default `Restricted` policy; the wrapper passes `-ExecutionPolicy Bypass` for that
+single invocation instead of changing a machine-wide setting.
